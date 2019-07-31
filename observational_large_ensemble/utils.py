@@ -630,6 +630,12 @@ def get_obs(this_varname, this_filename, valid_years, mode_lag, cvdp_file, AMO_c
     subset = np.isin(df_shifted['year'].values, valid_years)
     df_shifted = df_shifted.loc[subset, :]
 
+    # Reset the forced trend time series to a mean of zero
+    # This allows for the forced trend to be straightforwardly added in later
+    F = df_shifted['F'].values
+    F -= np.mean(F)
+    df_shifted = df_shifted.assign(F=F)
+
     # Load dataset
     if isinstance(this_filename, str):  # Observational data
         ds = xr.open_dataset(this_filename)
