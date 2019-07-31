@@ -88,7 +88,7 @@ def fit_linear_model(dsX, df, this_varname, workdir, mode_block):
             BETA[month-1, :, :, kk, const_params:] = np.array(beta_sub).T.reshape((nlat, nlon, nparams - const_params))
 
         # constant and trend stay the same throughout
-        const_term = np.array(beta[:const_params, :].T.reshape((nlat, nlon, const_params)))[:, :, np.newaxis, :]
+        const_term = np.array(beta[:const_params, :]).T.reshape((nlat, nlon, const_params))[:, :, np.newaxis, :]
         BETA[month-1, :, :, :, :const_params] = const_term
 
     da_residual = da.copy(data=residual)
