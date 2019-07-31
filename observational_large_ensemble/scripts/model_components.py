@@ -6,7 +6,7 @@ from subprocess import check_call
 import pandas as pd
 
 
-def fit_linear_model(dsX, df, this_varname, workdir):
+def fit_linear_model(dsX, df, this_varname, workdir, mode_block):
     """Save linear regression model parameters.
 
     Parameters
@@ -19,6 +19,9 @@ def fit_linear_model(dsX, df, this_varname, workdir):
         Variable name for which to fit regression
     workdir : str
         Where to save output
+    mode_block : int
+        Number of years to remove when resampling to estimate teleconnection uncertainty.
+        Set to zero to use all data (deterministic)
 
     Returns
     -------
@@ -41,15 +44,23 @@ def fit_linear_model(dsX, df, this_varname, workdir):
     if (np.std(df.loc[:, 'F'].values) == 0):  # remove trend predictor, will happen for SLP
         predictors_names.remove('F')
 
+    ntime, nlat, nlon = np.shape(da)
+    nyrs = int(ntime/12)
+
+    nparams = len(predictors_names)
+    const_params = int(np.isin('constant', predictors_names)) + int(np.isin('F', predictors_names))
+
     # Create dataset to save beta values
+    description = ('Regression coefficients for %s. '
+                   'Each sample has a separate consecutive %02d year block removed.' % (this_varname, mode_block))
     ds_beta = xr.Dataset(coords={'month': np.arange(1, 13),
                                  'lat': da.lat,
-                                 'lon': da.lon},
-                         attrs={'description': 'Regression coefficients for %s' % this_varname})
+                                 'lon': da.lon,
+                                 'sample': np.arange(nyrs)},
+                         attrs={'description': description})
 
     residual = np.empty(da.shape)
-    _, nlat, nlon = np.shape(da)
-    BETA = np.empty((12, nlat, nlon, len(predictors_names)))
+    BETA = np.empty((12, nlat, nlon, nyrs, nparams))
 
     for month in range(1, 13):
 
@@ -66,12 +77,24 @@ def fit_linear_model(dsX, df, this_varname, workdir):
         yhat = np.dot(X_mat, beta)
         residual[time_idx, ...] = np.array(y_mat - yhat).reshape((ntime, nlat, nlon))
 
-        BETA[month-1, ...] = np.array(beta).T.reshape((nlat, nlon, len(predictors_names)))
+        # Now, resample the residuals from the constant and trend to assess uncertainty in teleconnection patterns
+        partial_residual = y_mat - np.dot(X_mat[:, :const_params], beta[:const_params, :])
+        for kk in range(nyrs):
+            drop_idx = (np.arange(kk, kk + mode_block)) % nyrs  # remove these years
+            keep_idx = ~np.isin(np.arange(nyrs), drop_idx)
+            X_mat_sub = X_mat[keep_idx, const_params:]
+            y_mat_sub = partial_residual[keep_idx, :]
+            beta_sub = (np.dot(np.dot((np.dot(X_mat_sub.T, X_mat_sub)).I, X_mat_sub.T), y_mat_sub))
+            BETA[month-1, :, :, kk, const_params:] = np.array(beta_sub).T.reshape((nlat, nlon, nparams - const_params))
+
+        # constant and trend stay the same throughout
+        const_term = np.array(beta[:const_params, :].T.reshape((nlat, nlon, const_params)))[:, :, np.newaxis, :]
+        BETA[month-1, :, :, :, :const_params] = const_term
 
     da_residual = da.copy(data=residual)
     da_residual.attrs
     for counter, name in enumerate(predictors_names):
-        kwargs = {'beta_%s' % name: (('month', 'lat', 'lon'), BETA[..., counter])}
+        kwargs = {'beta_%s' % name: (('month', 'lat', 'lon', 'sample'), BETA[..., counter])}
         ds_beta = ds_beta.assign(**kwargs)
 
     # Save to netcdf
@@ -148,12 +171,21 @@ def combine_variability(varnames, workdir, output_dir, n_members, block_use_mo,
 
             # Add a constant
             df_shifted = df_shifted.assign(constant=np.ones(len(df_shifted)))
-
             assert (df_shifted.month.values == climate_noise['time.month'].values).all()
-            AMO_lowpass = ds_beta.beta_AMO_lowpass[modes_idx, ...]*df_shifted['AMO_lowpass'][:, np.newaxis, np.newaxis]
-            ENSO = ds_beta.beta_ENSO[modes_idx, ...]*df_shifted['ENSO'][:, np.newaxis, np.newaxis]
-            PDO_orth = ds_beta.beta_PDO_orth[modes_idx, ...]*df_shifted['PDO_orth'][:, np.newaxis, np.newaxis]
-            mean = ds_beta.beta_constant[modes_idx, ...]*df_shifted['constant'][:, np.newaxis, np.newaxis]
+
+            # Grab a sample of the teleconnection coefficients
+            nsamples = ds_beta.dims['sample']
+            this_sample = np.random.choice(np.arange(nsamples))
+
+            this_AMO = ds_beta.beta_AMO_lowpass[modes_idx, :, :, this_sample]
+            this_ENSO = ds_beta.beta_ENSO[modes_idx, :, :, this_sample]
+            this_PDO = ds_beta.beta_PDO_orth[modes_idx, :, :, this_sample]
+            this_mean = ds_beta.beta_constant[modes_idx, :, :, 0]  # mean doesn't vary with sample
+
+            AMO_lowpass = this_AMO*df_shifted['AMO_lowpass'][:, np.newaxis, np.newaxis]
+            ENSO = this_ENSO*df_shifted['ENSO'][:, np.newaxis, np.newaxis]
+            PDO_orth = this_PDO*df_shifted['PDO_orth'][:, np.newaxis, np.newaxis]
+            mean = this_mean*df_shifted['constant'][:, np.newaxis, np.newaxis]
 
             detrended_values = climate_noise.copy(data=climate_noise.values + AMO_lowpass + ENSO + PDO_orth + mean)
             description = ('Member %03d of the Observational Large Ensemble ' % (kk + 1) +

@@ -42,6 +42,8 @@ if __name__ == '__main__':
     # Parameters consistent across case
     AMO_cutoff_freq = 1/10  # Cut off frequency for Butterworth filter of AMO (1/years)
     mode_lag = 1  # number of months to lag between mode time series and climate response
+    # number of years to remove when estimating teleconnection uncertainty. Set to zero for fully deterministic.
+    mode_block = 20
 
     valid_years = np.arange(1921, 2015)
     cvdp_loc = '/glade/work/mckinnon/CVDP'
@@ -68,7 +70,7 @@ if __name__ == '__main__':
         for v, f in zip(varnames, filenames):
             dsX, df_shifted, _ = olens_utils.get_obs(v, f, valid_years, mode_lag,
                                                      cvdp_file, AMO_cutoff_freq, name_conversion)
-            mc.fit_linear_model(dsX, df_shifted, v, workdir)
+            mc.fit_linear_model(dsX, df_shifted, v, workdir, mode_block)
 
     elif 'LE' in args.case:
         name_conversion = {'tas': 'TREFHT', 'pr': 'PRECC', 'slp': 'PSL'}
@@ -105,7 +107,7 @@ if __name__ == '__main__':
 
             dsX, df_shifted, _ = olens_utils.get_obs(v, f, valid_years, mode_lag,
                                                      cvdp_file, AMO_cutoff_freq, name_conversion)
-            mc.fit_linear_model(dsX, df_shifted, v, workdir)
+            mc.fit_linear_model(dsX, df_shifted, v, workdir, mode_block)
 
     # Calculate block size
     block_use, block_use_mo = olens_utils.choose_block(workdir, varnames)
