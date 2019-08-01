@@ -644,6 +644,8 @@ def get_obs(this_varname, this_filename, valid_years, mode_lag, cvdp_file, AMO_c
             ds = xr.open_mfdataset(this_filename)
             this_filename2 = [f.replace('PRECC', 'PRECL') for f in this_filename]
             ds2 = xr.open_mfdataset(this_filename2)
+            # CESM output saved with one day delay, so need to move back
+            ds2 = ds2.assign_coords(time=ds2.time-timedelta(days=1))
         else:
             ds = xr.open_mfdataset(this_filename)
 
