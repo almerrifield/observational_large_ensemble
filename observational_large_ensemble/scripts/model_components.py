@@ -50,22 +50,75 @@ def fit_linear_model(da, df, this_varname, workdir):
     _, nlat, nlon = np.shape(da)
     BETA = np.empty((12, nlat, nlon, len(predictors_names)))
 
+    # create set of options using different combinations of predictors
+    all_opts = []
+    all_opts.append(['constant'])
+    opt_names0 = predictors_names[1:]
+    for n in opt_names0:
+
+        opt_names = opt_names0.copy()
+        all_opts.append(['constant', n])
+        opt_names.remove(n)
+        for m in opt_names:
+            all_opts.append(['constant', m, n])
+            opt_names.remove(m)
+            for i in opt_names:
+                all_opts.append(['constant', m, n, i])
+                opt_names.remove(i)
+                for j in opt_names:
+                    all_opts.append(['constant', m, n, i, j])
+
+    all_opts = np.unique(all_opts)
+    n_opts = len(all_opts)
+
     for month in range(1, 13):
 
         time_idx = da['time.month'] == month
 
         predictand = da.sel(time=da['time.month'] == month).values
-        predictors = df.loc[df['month'] == month, predictors_names].values
         ntime, nlat, nlon = np.shape(predictand)
 
-        y_mat = np.matrix(predictand.reshape(ntime, nlat*nlon))
+        # initialize matrices to save BIC and model parameters
+        bic_save = np.empty((nlat*nlon, n_opts))
+        all_beta = np.zeros((len(predictors_names), nlat*nlon, n_opts))
+        for kk in range(n_opts):
+
+            predictors = df.loc[df['month'] == month, all_opts[kk]].values
+
+            y_mat = np.matrix(predictand.reshape(ntime, nlat*nlon))
+            X_mat = np.matrix(predictors)
+
+            beta = (np.dot(np.dot((np.dot(X_mat.T, X_mat)).I, X_mat.T), y_mat))  # Max likelihood estimate
+            yhat = np.dot(X_mat, beta)
+
+            # for each gridbox, get the standard errors of each predictor
+            err_var = np.sum((np.array(y_mat) - np.array(yhat))**2, axis=0)/ntime
+            k = len(all_opts[kk]) + 1
+            BIC = ntime*np.log(err_var) + k*np.log(ntime)
+            bic_save[:, kk] = BIC
+
+            # fill in beta matrix with appropriate coefficients
+            idx = np.array([np.where(np.isin(predictors_names, x))[0][0] for x in all_opts[kk]])
+            all_beta[idx, :, kk] = beta
+
+        # identify smallest bic for each gridbox
+        min_bic = np.argmin(bic_save, axis=-1)
+
+        mask_vec = np.isnan(predictand[0, ...].reshape((nlat*nlon)))
+        beta_best = np.nan*np.ones((len(predictors_names), nlat*nlon))
+        for ct in range(nlat*nlon):
+            if mask_vec[ct]:
+                continue
+            beta_best[:, ct] = all_beta[:, ct, min_bic[ct]]
+
+        # Get full set of predictors
+        predictors = df.loc[df['month'] == month, predictors_names].values
         X_mat = np.matrix(predictors)
 
-        beta = (np.dot(np.dot((np.dot(X_mat.T, X_mat)).I, X_mat.T), y_mat))  # Max likelihood estimate
-        yhat = np.dot(X_mat, beta)
+        yhat = np.dot(X_mat, np.matrix(beta_best))
         residual[time_idx, ...] = np.array(y_mat - yhat).reshape((ntime, nlat, nlon))
 
-        BETA[month-1, ...] = np.array(beta).T.reshape((nlat, nlon, len(predictors_names)))
+        BETA[month-1, ...] = (beta_best.T).reshape((nlat, nlon, len(predictors_names)))
 
     da_residual = da.copy(data=residual)
     da_residual.attrs
