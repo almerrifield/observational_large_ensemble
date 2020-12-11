@@ -4,6 +4,7 @@ from observational_large_ensemble import utils as olens_utils
 import xarray as xr
 from subprocess import check_call
 import pandas as pd
+from sklearn.linear_model import RidgeCV
 
 
 def fit_linear_model(da, df, this_varname, workdir):
@@ -50,6 +51,8 @@ def fit_linear_model(da, df, this_varname, workdir):
     _, nlat, nlon = np.shape(da)
     BETA = np.empty((12, nlat, nlon, len(predictors_names)))
 
+    mod = RidgeCV(fit_intercept=False, alphas=np.logspace(-3, 3, 10))
+
     for month in range(1, 13):
 
         time_idx = da['time.month'] == month
@@ -57,15 +60,22 @@ def fit_linear_model(da, df, this_varname, workdir):
         predictand = da.sel(time=da['time.month'] == month).values
         predictors = df.loc[df['month'] == month, predictors_names].values
         ntime, nlat, nlon = np.shape(predictand)
+        y_vec = predictand.reshape(ntime, nlat*nlon)
 
-        y_mat = np.matrix(predictand.reshape(ntime, nlat*nlon))
+        beta = np.nan*np.ones((len(predictors_names), nlat*nlon))
+
+        for kk in range(nlat*nlon):
+            if np.isnan(y_vec[0, kk]):
+                continue
+
+            mod_fit = mod.fit(predictors, y_vec[:, kk])
+            beta[:, kk] = mod_fit.coef_
+
         X_mat = np.matrix(predictors)
-
-        beta = (np.dot(np.dot((np.dot(X_mat.T, X_mat)).I, X_mat.T), y_mat))  # Max likelihood estimate
         yhat = np.dot(X_mat, beta)
-        residual[time_idx, ...] = np.array(y_mat - yhat).reshape((ntime, nlat, nlon))
+        residual[time_idx, ...] = (y_vec - np.array(yhat)).reshape((ntime, nlat, nlon))
 
-        BETA[month-1, ...] = np.array(beta).T.reshape((nlat, nlon, len(predictors_names)))
+        BETA[month-1, ...] = beta.T.reshape((nlat, nlon, len(predictors_names)))
 
     da_residual = da.copy(data=residual)
     da_residual.attrs
