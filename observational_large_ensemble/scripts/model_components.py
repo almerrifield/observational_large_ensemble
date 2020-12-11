@@ -65,7 +65,7 @@ def fit_linear_model(da, df, this_varname, workdir):
         beta = np.nan*np.ones((len(predictors_names), nlat*nlon))
 
         for kk in range(nlat*nlon):
-            if np.isnan(y_vec[0, kk]):
+            if np.isnan(y_vec[:, kk]).any():
                 continue
 
             mod_fit = mod.fit(predictors, y_vec[:, kk])
